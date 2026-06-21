@@ -37,3 +37,13 @@ test("ignores unrelated notes and the bot's own notes", () => {
     false,
   );
 });
+
+test("detects a mention in a NIP-22 comment", () => {
+  assert.equal(
+    isAddressedToBot(
+      { ...note("comment", [["p", botPublicKey]]), kind: 1111 },
+      botPublicKey,
+    ),
+    true,
+  );
+});

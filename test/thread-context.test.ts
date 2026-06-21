@@ -46,6 +46,24 @@ test("supports legacy unmarked reply tags", () => {
   assert.equal(pointer?.id, parentId);
 });
 
+test("uses the lowercase e tag as a NIP-22 parent", () => {
+  const parentId = "b".repeat(64);
+  const pointer = getParentPointer({
+    ...note("a".repeat(64), "comment", [
+      ["E", "f".repeat(64), "wss://root.example"],
+      ["e", parentId, "wss://parent.example", "c".repeat(64)],
+      ["k", "1111"],
+    ]),
+    kind: 1111,
+  });
+
+  assert.deepEqual(pointer, {
+    id: parentId,
+    relays: ["wss://parent.example"],
+    author: "c".repeat(64),
+  });
+});
+
 test("labels the parent note and current request clearly", () => {
   const messages = formatThreadMessages(
     [

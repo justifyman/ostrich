@@ -10,6 +10,7 @@ It aims for useful, concise answers with just enough chaos to feel native.
 - Listens for kind-1 notes tagged with the bot's public key
 - Recognizes NIP-27 `npub`/`nprofile` mentions
 - Rebuilds NIP-10 reply context before answering
+- Supports NIP-22 `kind:1111` comments and comment replies
 - Uses reply-tag relay hints and retries to recover parent notes across relays
 - Reads quoted notes from NIP-18 `q` tags and `nostr:note1...`/`nostr:nevent1...` links
 - Uses Groq chat completions

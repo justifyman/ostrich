@@ -16,6 +16,19 @@ function isRelayUrl(value: string | undefined): value is string {
 }
 
 export function getParentPointer(event: NostrEvent): EventPointer | undefined {
+  if (event.kind === 1111) {
+    const parent = event.tags.find(
+      ([name, value]) => name === "e" && /^[0-9a-f]{64}$/i.test(value ?? ""),
+    );
+    if (!parent?.[1]) return undefined;
+
+    return {
+      id: parent[1],
+      relays: isRelayUrl(parent[2]) ? [parent[2]] : [],
+      author: parent[3],
+    };
+  }
+
   const references = nip10.parse(event);
   return references.reply ?? references.root;
 }
@@ -31,7 +44,14 @@ export function getRelayHints(
   }
 
   for (const [name, , relay] of event.tags) {
-    if ((name === "e" || name === "p" || name === "q") && isRelayUrl(relay)) {
+    if (
+      (name === "e" ||
+        name === "E" ||
+        name === "p" ||
+        name === "P" ||
+        name === "q") &&
+      isRelayUrl(relay)
+    ) {
       hints.add(relay);
     }
   }

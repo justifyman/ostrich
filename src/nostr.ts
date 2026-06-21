@@ -45,14 +45,23 @@ export class NostrClient {
 
   listen(onEvent: (event: NostrEvent) => void): SubCloser {
     const filter: Filter = {
-      kinds: [1],
+      kinds: [1, 1111],
       "#p": [this.publicKey],
       since: Math.floor(Date.now() / 1_000) - 10,
     };
 
     return this.pool.subscribeMany(this.relays, filter, {
       onevent: (event) => {
-        if (verifyEvent(event)) onEvent(event);
+        if (verifyEvent(event)) {
+          const parent = getParentPointer(event);
+          logger.info("mention event received", {
+            eventId: event.id,
+            kind: event.kind,
+            tagNames: [...new Set(event.tags.map(([name]) => name))],
+            parentId: parent?.id,
+          });
+          onEvent(event);
+        }
       },
       onclose: (reasons) => {
         logger.warn("relay subscription closed", { reasons });
@@ -170,17 +179,14 @@ export class NostrClient {
   }
 
   async publishReply(target: NostrEvent, content: string): Promise<NostrEvent> {
-    const references = nip10.parse(target);
-    const rootId = references.root?.id ?? target.id;
-    const tags: string[][] = [
-      ["e", rootId, "", "root"],
-      ["e", target.id, "", "reply"],
-      ["p", target.pubkey],
-    ];
+    const tags =
+      target.kind === 1111
+        ? this.buildCommentReplyTags(target)
+        : this.buildTextReplyTags(target);
 
     const event = finalizeEvent(
       {
-        kind: 1,
+        kind: target.kind === 1111 ? 1111 : 1,
         created_at: Math.floor(Date.now() / 1_000),
         tags,
         content,
@@ -213,5 +219,32 @@ export class NostrClient {
 
   private getSeenRelayUrls(eventId: string): string[] {
     return [...(this.pool.seenOn.get(eventId) ?? [])].map((relay) => relay.url);
+  }
+
+  private buildTextReplyTags(target: NostrEvent): string[][] {
+    const references = nip10.parse(target);
+    const rootId = references.root?.id ?? target.id;
+    return [
+      ["e", rootId, references.root?.relays?.[0] ?? "", "root"],
+      ["e", target.id, this.getSeenRelayUrls(target.id)[0] ?? "", "reply"],
+      ["p", target.pubkey],
+    ];
+  }
+
+  private buildCommentReplyTags(target: NostrEvent): string[][] {
+    const rootTags = target.tags.filter(([name]) =>
+      ["E", "A", "I", "K", "P"].includes(name ?? ""),
+    );
+    const relayHint =
+      this.getSeenRelayUrls(target.id)[0] ??
+      getRelayHints(target, getParentPointer(target))[0] ??
+      "";
+
+    return [
+      ...rootTags,
+      ["e", target.id, relayHint, target.pubkey],
+      ["k", String(target.kind)],
+      ["p", target.pubkey, relayHint],
+    ];
   }
 }
