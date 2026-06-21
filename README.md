@@ -31,7 +31,7 @@ Do not use your personal Nostr key. Generate a separate identity for Ostrich and
 ## Installation
 
 ```bash
-git clone https://github.com/your-name/ostrich.git
+git clone https://github.com/justifyman/ostrich.git
 cd ostrich
 npm install
 cp .env.example .env
