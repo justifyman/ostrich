@@ -7,7 +7,7 @@ Thanks for helping the bird become smarter without making it unbearable.
 1. Fork and clone the repository.
 2. Install Node.js 20 or newer.
 3. Run `npm install`.
-4. Copy `.env.example` to `.env` and use dedicated development credentials.
+4. Copy `exampleenv.txt` to `.env` and use dedicated development credentials.
 5. Run `npm run check` and `npm test` before opening a pull request.
 
 Use `npm run dev` for local development. Keep changes focused and add tests for behavior that can be tested without live relays or paid API calls.
