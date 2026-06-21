@@ -15,7 +15,11 @@ import {
   getParentPointer,
   getRelayHints,
 } from "./thread-context.js";
-import type { ConversationMessage, NostrEvent } from "./types.js";
+import type {
+  ConversationContext,
+  ConversationMessage,
+  NostrEvent,
+} from "./types.js";
 
 useWebSocketImplementation(WebSocket);
 
@@ -30,6 +34,7 @@ export class NostrClient {
     private readonly retryDelayMs = 750,
   ) {
     this.pool = new SimplePool({ enableReconnect: true });
+    this.pool.trackRelays = true;
     this.pool.onRelayConnectionSuccess = (url: string) => {
       logger.info("relay connected", { relay: url });
     };
@@ -58,17 +63,23 @@ export class NostrClient {
   async buildConversation(
     event: NostrEvent,
     maxEvents: number,
-  ): Promise<ConversationMessage[]> {
+  ): Promise<ConversationContext> {
     const chain: NostrEvent[] = [event];
     const visited = new Set([event.id]);
     let cursor = event;
+    const initialParent = getParentPointer(event);
+    let parentLoaded = false;
 
     while (chain.length < maxEvents) {
       const pointer = getParentPointer(cursor);
       if (!pointer || visited.has(pointer.id)) break;
 
       const lookupRelays = [
-        ...new Set([...getRelayHints(cursor, pointer), ...this.relays]),
+        ...new Set([
+          ...getRelayHints(cursor, pointer),
+          ...this.getSeenRelayUrls(cursor.id),
+          ...this.relays,
+        ]),
       ];
       let parent: NostrEvent;
 
@@ -109,6 +120,7 @@ export class NostrClient {
       }
 
       chain.push(parent);
+      if (cursor.id === event.id) parentLoaded = true;
       visited.add(parent.id);
       cursor = parent;
     }
@@ -139,12 +151,22 @@ export class NostrClient {
         : [],
     );
 
-    if (quotedMessages.length === 0) return messages;
+    if (quotedMessages.length === 0) {
+      return {
+        messages,
+        parentExpected: Boolean(initialParent),
+        parentLoaded,
+      };
+    }
 
     const triggeringMessage = messages.pop();
-    return triggeringMessage
-      ? [...messages, ...quotedMessages, triggeringMessage]
-      : quotedMessages;
+    return {
+      messages: triggeringMessage
+        ? [...messages, ...quotedMessages, triggeringMessage]
+        : quotedMessages,
+      parentExpected: Boolean(initialParent),
+      parentLoaded,
+    };
   }
 
   async publishReply(target: NostrEvent, content: string): Promise<NostrEvent> {
@@ -187,5 +209,9 @@ export class NostrClient {
 
   close(): void {
     this.pool.close(this.relays);
+  }
+
+  private getSeenRelayUrls(eventId: string): string[] {
+    return [...(this.pool.seenOn.get(eventId) ?? [])].map((relay) => relay.url);
   }
 }

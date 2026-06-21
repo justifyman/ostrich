@@ -135,12 +135,24 @@ export class OstrichBot {
 
     try {
       logger.info("answering note", { eventId: event.id, author: event.pubkey });
-      const rawConversation = await this.nostr.buildConversation(
+      const context = await this.nostr.buildConversation(
         event,
         this.config.contextEvents,
       );
+      if (context.parentExpected && !context.parentLoaded) {
+        const reply = await this.nostr.publishReply(
+          event,
+          "i can see that you replied to a note, but i couldn't retrieve the parent event from the available relays. try quoting the note, linking its note1/nevent1 address, or republishing it to a relay we share.",
+        );
+        logger.warn("replied without unavailable parent context", {
+          eventId: event.id,
+          replyId: reply.id,
+        });
+        return;
+      }
+
       const conversation = limitConversation(
-        rawConversation,
+        context.messages,
         this.config.maxInputChars,
         this.config.maxContextChars,
       );
