@@ -52,6 +52,14 @@ export class GlobalRateLimiter {
     };
   }
 
+  async acquire(): Promise<RateLimitPermit> {
+    while (true) {
+      const result = this.tryAcquire();
+      if (result.allowed) return result.permit;
+      await new Promise((resolve) => setTimeout(resolve, result.retryAfterMs));
+    }
+  }
+
   private prune(now: number): void {
     const cutoff = now - this.windowMs;
     while ((this.requestTimes[0] ?? Number.POSITIVE_INFINITY) <= cutoff) {

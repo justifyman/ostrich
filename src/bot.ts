@@ -6,6 +6,7 @@ import { logger } from "./logger.js";
 import { isAddressedToBot } from "./mentions.js";
 import { NostrClient } from "./nostr.js";
 import { GlobalRateLimiter } from "./rate-limiter.js";
+import { withRetry } from "./retry.js";
 import type { NostrEvent } from "./types.js";
 
 export class OstrichBot {
@@ -16,6 +17,9 @@ export class OstrichBot {
   private subscription?: { close: (reason?: string) => void };
   private readonly npub: string;
   private readonly globalLimiter: GlobalRateLimiter;
+  private readonly queue: NostrEvent[] = [];
+  private activeJobs = 0;
+  private stopping = false;
 
   constructor(private readonly config: Config) {
     this.npub = nip19.npubEncode(config.publicKey);
@@ -24,13 +28,20 @@ export class OstrichBot {
       config.globalRateWindowMs,
       config.maxConcurrentRequests,
     );
-    this.nostr = new NostrClient(config.relays, config.privateKey, config.publicKey);
+    this.nostr = new NostrClient(
+      config.relays,
+      config.privateKey,
+      config.publicKey,
+      config.retryAttempts,
+      config.retryDelayMs,
+    );
     this.groq = new GroqResponder({
       apiKey: config.groqApiKey,
       model: config.groqModel,
       maxTokens: config.maxReplyTokens,
       temperature: config.temperature,
       npub: this.npub,
+      sourceCodeUrl: config.sourceCodeUrl,
     });
   }
 
@@ -45,10 +56,12 @@ export class OstrichBot {
       model: this.config.groqModel,
       globalLimit: `${this.config.globalMaxRequests}/${this.config.globalRateWindowMs / 1_000}s`,
       maxConcurrent: this.config.maxConcurrentRequests,
+      maxQueueSize: this.config.maxQueueSize,
     });
   }
 
   stop(): void {
+    this.stopping = true;
     this.subscription?.close("ostrich shutting down");
     this.nostr.close();
     logger.info("ostrich tucked its head into the sand");
@@ -87,15 +100,38 @@ export class OstrichBot {
       return;
     }
 
-    const rateLimit = this.globalLimiter.tryAcquire();
-    if (!rateLimit.allowed) {
-      logger.warn("global rate limit reached", {
+    if (this.queue.length >= this.config.maxQueueSize) {
+      logger.warn("request queue is full", {
         eventId: event.id,
-        reason: rateLimit.reason,
-        retryAfterMs: rateLimit.retryAfterMs,
+        queueSize: this.queue.length,
       });
       return;
     }
+
+    this.queue.push(event);
+    logger.info("note queued", { eventId: event.id, queueSize: this.queue.length });
+    this.drainQueue();
+  }
+
+  private drainQueue(): void {
+    while (
+      !this.stopping &&
+      this.activeJobs < this.config.maxConcurrentRequests &&
+      this.queue.length > 0
+    ) {
+      const event = this.queue.shift();
+      if (!event) return;
+
+      this.activeJobs += 1;
+      void this.processEvent(event).finally(() => {
+        this.activeJobs -= 1;
+        this.drainQueue();
+      });
+    }
+  }
+
+  private async processEvent(event: NostrEvent): Promise<void> {
+    const permit = await this.globalLimiter.acquire();
 
     try {
       logger.info("answering note", { eventId: event.id, author: event.pubkey });
@@ -108,7 +144,22 @@ export class OstrichBot {
         this.config.maxInputChars,
         this.config.maxContextChars,
       );
-      const response = await this.groq.reply(conversation);
+      const response = await withRetry(
+        () => this.groq.reply(conversation),
+        {
+          attempts: this.config.retryAttempts,
+          initialDelayMs: this.config.retryDelayMs,
+          operationName: "Groq response",
+          onRetry: ({ attempt, delayMs, error }) => {
+            logger.warn("retrying Groq response", {
+              eventId: event.id,
+              attempt,
+              delayMs,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          },
+        },
+      );
       const reply = await this.nostr.publishReply(event, response);
       logger.info("reply published", { eventId: reply.id, parentId: event.id });
     } catch (error) {
@@ -117,7 +168,7 @@ export class OstrichBot {
         error: error instanceof Error ? error.message : String(error),
       });
     } finally {
-      rateLimit.permit.release();
+      permit.release();
     }
   }
 

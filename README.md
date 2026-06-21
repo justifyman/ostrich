@@ -10,12 +10,16 @@ It aims for useful, concise answers with just enough chaos to feel native.
 - Listens for kind-1 notes tagged with the bot's public key
 - Recognizes NIP-27 `npub`/`nprofile` mentions
 - Rebuilds NIP-10 reply context before answering
+- Uses reply-tag relay hints and retries to recover parent notes across relays
 - Reads quoted notes from NIP-18 `q` tags and `nostr:note1...`/`nostr:nevent1...` links
 - Uses Groq chat completions
 - Signs replies locally with a dedicated Nostr key
 - Deduplicates events received from several relays
 - Includes per-author cooldowns and bounded conversation context
 - Enforces a global request window and concurrency cap
+- Queues bursts instead of silently dropping them
+- Retries transient Groq and relay publish failures
+- Logs relay connection and subscription failures
 - Rejects oversized prompts before they consume model quota
 - Treats public thread content as untrusted input
 - Keeps secrets in environment variables and out of logs
@@ -34,13 +38,13 @@ Do not use your personal Nostr key. Generate a separate identity for Ostrich and
 git clone https://github.com/justifyman/ostrich.git
 cd ostrich
 npm install
-cp .env.example .env
+cp exampleenv.txt .env
 ```
 
 On Windows PowerShell, use:
 
 ```powershell
-Copy-Item .env.example .env
+Copy-Item exampleenv.txt .env
 ```
 
 Edit `.env` with your Groq API key and the bot's Nostr private key:
@@ -50,9 +54,12 @@ GROQ_API_KEY=gsk_your_key
 NOSTR_PRIVATE_KEY=nsec1your_dedicated_bot_key
 NOSTR_RELAYS=wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net
 GROQ_MODEL=openai/gpt-oss-20b
+SOURCE_CODE_URL=https://github.com/justifyman/ostrich
 ```
 
 `NOSTR_PRIVATE_KEY` accepts an `nsec` or a 64-character hex secret key. The file is ignored by Git, but you should still treat it like a live credential.
+
+Ostrich uses `SOURCE_CODE_URL` to link people to its source code whenever they ask for its GitHub page or repository.
 
 ## Run Ostrich
 
@@ -86,6 +93,7 @@ At startup, Ostrich logs its `npub`, relay count, and Groq model. Mention that `
 | `NOSTR_PRIVATE_KEY` | Yes | — | Dedicated bot `nsec` or hex key |
 | `NOSTR_RELAYS` | No | Three public relays | Comma-separated relay URLs |
 | `GROQ_MODEL` | No | `openai/gpt-oss-20b` | Groq chat model |
+| `SOURCE_CODE_URL` | No | — | Public GitHub repository Ostrich shares when asked for its source |
 | `MAX_REPLY_TOKENS` | No | `220` | Maximum generated tokens |
 | `TEMPERATURE` | No | `0.8` | Response creativity |
 | `CONTEXT_EVENTS` | No | `8` | Maximum notes loaded from a thread |
@@ -95,6 +103,9 @@ At startup, Ostrich logs its `npub`, relay count, and Groq model. Mention that `
 | `GLOBAL_MAX_REQUESTS` | No | `30` | Maximum accepted AI requests per global window |
 | `GLOBAL_RATE_WINDOW_SECONDS` | No | `60` | Length of the global rate-limit window |
 | `MAX_CONCURRENT_REQUESTS` | No | `2` | Maximum AI requests processed simultaneously |
+| `MAX_QUEUE_SIZE` | No | `100` | Maximum mentions waiting to be processed |
+| `RETRY_ATTEMPTS` | No | `3` | Attempts for Groq responses and relay publishing |
+| `RETRY_DELAY_MS` | No | `750` | Initial retry delay with exponential backoff |
 
 Model availability can vary by Groq account. Set `GROQ_MODEL` to a chat-completion model currently available to you.
 
@@ -139,6 +150,7 @@ test/
 - Public Nostr notes sent to Ostrich are forwarded to Groq as conversation context.
 - Prompt-injection defenses reduce casual jailbreaks, but no language model can be guaranteed jailbreak-proof.
 - Global limits are in-memory and reset when the bot restarts.
+- The queue is also in-memory; queued requests are lost if the process stops.
 - Review dependency updates and rotate credentials if you suspect exposure.
 
 ## Contributing

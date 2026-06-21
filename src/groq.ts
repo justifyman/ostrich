@@ -8,6 +8,7 @@ export interface GroqResponderOptions {
   maxTokens: number;
   temperature: number;
   npub: string;
+  sourceCodeUrl?: string;
 }
 
 export class GroqResponder {
@@ -23,7 +24,13 @@ export class GroqResponder {
       temperature: this.options.temperature,
       max_completion_tokens: this.options.maxTokens,
       messages: [
-        { role: "system", content: buildOstrichSystemPrompt(this.options.npub) },
+        {
+          role: "system",
+          content: buildOstrichSystemPrompt(
+            this.options.npub,
+            this.options.sourceCodeUrl,
+          ),
+        },
         ...messages,
       ],
     });

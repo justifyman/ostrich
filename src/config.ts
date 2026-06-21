@@ -4,6 +4,7 @@ import { getPublicKey, nip19 } from "nostr-tools";
 export interface Config {
   groqApiKey: string;
   groqModel: string;
+  sourceCodeUrl?: string;
   privateKey: Uint8Array;
   publicKey: string;
   relays: string[];
@@ -16,6 +17,9 @@ export interface Config {
   globalMaxRequests: number;
   globalRateWindowMs: number;
   maxConcurrentRequests: number;
+  maxQueueSize: number;
+  retryAttempts: number;
+  retryDelayMs: number;
 }
 
 function required(name: string): string {
@@ -75,8 +79,22 @@ function parseRelays(value: string): string[] {
     if (url.protocol !== "wss:" && url.protocol !== "ws:") {
       throw new Error(`Relay must use ws:// or wss://: ${relay}`);
     }
+    if (relay.includes("|") || url.username || url.password || url.hash) {
+      throw new Error(`Relay URL contains unsupported characters or credentials: ${relay}`);
+    }
   }
   return relays;
+}
+
+function parseSourceCodeUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+
+  const url = new URL(trimmed);
+  if (url.protocol !== "https:" || url.hostname !== "github.com") {
+    throw new Error("SOURCE_CODE_URL must be an https://github.com URL");
+  }
+  return url.toString().replace(/\/$/, "");
 }
 
 export function loadConfig(): Config {
@@ -85,6 +103,7 @@ export function loadConfig(): Config {
   return {
     groqApiKey: required("GROQ_API_KEY"),
     groqModel: process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-20b",
+    sourceCodeUrl: parseSourceCodeUrl(process.env.SOURCE_CODE_URL),
     privateKey,
     publicKey: getPublicKey(privateKey),
     relays: parseRelays(
@@ -101,5 +120,8 @@ export function loadConfig(): Config {
     globalRateWindowMs:
       integer("GLOBAL_RATE_WINDOW_SECONDS", 60, 1, 86_400) * 1_000,
     maxConcurrentRequests: integer("MAX_CONCURRENT_REQUESTS", 2, 1, 100),
+    maxQueueSize: integer("MAX_QUEUE_SIZE", 100, 1, 10_000),
+    retryAttempts: integer("RETRY_ATTEMPTS", 3, 1, 10),
+    retryDelayMs: integer("RETRY_DELAY_MS", 750, 100, 60_000),
   };
 }
